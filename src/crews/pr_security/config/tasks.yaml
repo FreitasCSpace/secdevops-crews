@@ -41,4 +41,4 @@ review_all_prs:
 
   expected_output: >
     Security review summary for all PRs with findings and scores.
-  agent: review_manager
+  agent: security_reviewer
