@@ -1,89 +1,68 @@
 review_all_prs:
   description: >
-    You have {pr_count} PRs to review. Each PR's full diff is saved to a file.
+    You have {pr_count} PRs to review. Each diff is saved to a temp file.
 
-    PR list:
-    {pr_summary}
+    SKILLS LOADED: You have access to CareSpace security standards via
+    the skills system. Apply the carespace-security-auditor checklist
+    and carespace-security-standards (OWASP + HIPAA) for every review.
+
+    PR DATA (from pr_entries in inputs):
+    {pr_entries}
 
     DRY RUN: {dry_run}
 
     FOR EACH PR:
 
     1. READ THE FULL DIFF using read_file tool.
-       Pass the diff file path from the PR list above.
-       If the file is large (>500 lines), read it in chunks:
-       - read_file(path, 0, 500)
-       - read_file(path, 500, 500)
-       - Continue until you have read the ENTIRE file.
-       DO NOT skip any part of the diff. Read every line.
+       Use the diff_path from the PR entry.
+       For large files (>500 lines), chunk: read_file(path, 0, 500),
+       read_file(path, 500, 500), etc. Read the ENTIRE file.
 
-    2. ANALYZE the complete diff for:
-       - HIPAA violations: PHI logging, unencrypted storage, missing auth
-       - OWASP Top 10: injection, XSS, CSRF, broken auth, misconfig
-       - Hardcoded secrets: API keys, tokens, passwords, connection strings
-       - Missing input validation: DTOs without class-validator, unvalidated params
-       - CareSpace-specific:
-         * NestJS: missing @UseGuards(AuthGuard), missing RolesGuard
-         * Prisma: $queryRawUnsafe, mass assignment from request body
-         * React: dangerouslySetInnerHTML, PHI in localStorage
-         * Flutter: SharedPreferences for tokens, http:// URLs
-         * Docker: secrets in ENV, root user, :latest images
-       - Code quality: missing error handling, TypeScript any, dead code
+    2. APPLY the carespace-security-auditor checklist by file type:
+       - NestJS (.controller.ts, .service.ts): AuthGuard, RolesGuard, Prisma queries
+       - React (.tsx, .ts): XSS, localStorage PHI, hardcoded secrets
+       - Flutter (.dart): token storage, https enforcement, certificate bypass
+       - Prisma (.prisma): raw queries, mass assignment
+       - Docker: secrets in ENV, root user, base image pinning
+       - HIPAA: PHI logging, unencrypted storage, missing redaction
 
-    3. For each finding, record:
-       - Severity: Critical / High / Medium / Low
-       - File and line reference (from the diff)
-       - What's wrong (one clear sentence)
+    3. For each finding record:
+       - Severity: 🔴 Critical / 🟠 High / 🟡 Medium / ⚪ Low
+       - File:line reference
+       - Issue (one sentence)
        - HIPAA impact (for Critical/High)
-       - Specific fix (code example)
+       - Specific code fix
 
-    4. Score the PR:
-       - Any Critical finding → BLOCK (do not merge)
-       - Any High finding → NEEDS CHANGES
-       - Only Medium/Low or clean → PASS
+    4. Score: Any Critical → BLOCK, Any High → NEEDS CHANGES, else → PASS
 
     5. IF dry_run is "true":
        Do NOT call post_pr_review_comment.
-       Include the full formatted review for each PR in your final answer.
+       Return the full review for all PRs in your final answer.
 
     6. IF dry_run is "false":
-       Call post_pr_review_comment for EACH PR with:
-       - repo: the repo name
-       - pr_number: the PR number
-       - body: formatted markdown using this template:
+       Call post_pr_review_comment ONCE per PR with markdown:
 
        ## 🔒 Security Review — [PASS/NEEDS CHANGES/BLOCK]
-
        **PR:** repo#number — title
        **Reviewer:** CareSpace SecDevOps AI
        **Files reviewed:** N
-
        ### Security Findings
-
-       #### 🔴 Critical: [Issue Type]
-       **File:** `path/to/file.ts:42`
-       **Issue:** Description of the vulnerability.
-       **HIPAA Impact:** Why this matters for patient data.
-       **Fix:**
-       ```typescript
-       // suggested fix code
-       ```
-
-       (repeat for each finding)
-
-       ### Code Quality Notes
-       (any non-security observations)
-
+       #### 🔴 Critical: [Type]
+       **File:** path:line
+       **Issue:** Description
+       **HIPAA Impact:** Why it matters
+       **Fix:** code example
+       ### Code Quality
+       (observations or "✅ Code quality looks good.")
        ---
-       *Automated security review by CareSpace SecDevOps AI*
+       *Automated review by CareSpace SecDevOps AI*
 
-    IMPORTANT:
-    - Read the ENTIRE diff for each PR. No shortcuts.
-    - Only report REAL findings from the actual code in the diff.
-    - If a PR is clean, say so. Don't invent problems.
-    - Take your time. Thoroughness > speed.
+    RULES:
+    - Read the ENTIRE diff. No shortcuts. No truncation.
+    - Only report REAL findings. If clean, say so.
+    - Take your time. Thoroughness over speed.
+    - Every finding must reference actual code from the diff.
 
   expected_output: >
-    Complete security review for each PR with findings, severity,
-    file references, fixes, and PASS/NEEDS CHANGES/BLOCK score.
+    Complete security review per PR with findings, severity, fixes, and score.
   agent: security_reviewer

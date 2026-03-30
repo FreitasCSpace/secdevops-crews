@@ -16,21 +16,21 @@ log = logging.getLogger(__name__)
 
 @CrewBase
 class PRSecurityCrew:
-    """Scans open PRs for security issues — one subagent per PR.
+    """Scans open PRs — one parallel task per PR, skills loaded.
 
     before_kickoff:
-    1. Fetches all open PRs
-    2. For each PR, saves the FULL diff to a temp file (no truncation)
-    3. Creates a task per PR with the file path
+    1. Fetches all open PRs and saves FULL diffs to temp files
+    2. Creates dynamic tasks — one per PR
 
-    Each task gets the full diff via file reading — no context limit issues.
-    The LLM reads the file, analyzes thoroughly, and posts findings.
+    Skills (src/shared/skills/) provide OWASP + HIPAA + CareSpace knowledge.
+    Tasks run in parallel for efficiency.
     """
 
     agents_config = "config/agents.yaml"
     tasks_config = "config/tasks.yaml"
 
-    _pr_tasks: list = []
+    _dynamic_tasks: list[Task] = []
+    _reviewer_agent: Agent = None
 
     @before_kickoff
     def inject_context(self, inputs):
@@ -54,37 +54,33 @@ class PRSecurityCrew:
             ctx["dry_run"] = str(dry_run)
             return ctx
 
-        # ── 2. For each PR, save full diff to temp file ──
+        # ── 2. Save full diffs to temp files ──
         pr_entries = []
-        for pr in prs[:15]:  # Process up to 15 PRs per run
+        for pr in prs[:15]:
             repo = pr.get("repo", "")
             number = pr.get("number", 0)
             title = pr.get("title", "")
             author = pr.get("author", {}).get("login", "unknown") if isinstance(pr.get("author"), dict) else str(pr.get("author", "unknown"))
             url = pr.get("url", "")
 
-            # Get full diff — NO truncation
             try:
                 diff = get_pr_diff.run(repo=repo, pr_number=number)
             except Exception as e:
                 log.warning("pr_security: diff failed for %s#%d: %s", repo, number, e)
                 diff = f"Error fetching diff: {e}"
 
-            # Get changed files
             try:
                 files_result = get_pr_files.run(repo=repo, pr_number=number)
                 files = json.loads(files_result) if isinstance(files_result, str) else files_result
             except Exception:
                 files = []
 
-            # Save full diff to temp file
             diff_path = os.path.join(tempfile.gettempdir(), f"pr_{repo}_{number}.diff")
             with open(diff_path, "w") as f:
                 f.write(diff if isinstance(diff, str) else "")
 
             diff_size = os.path.getsize(diff_path)
             file_count = len(files) if isinstance(files, list) else 0
-
             file_list = "\n".join(
                 f"  {fi.get('filename', '?')} (+{fi.get('additions', 0)} -{fi.get('deletions', 0)})"
                 for fi in (files if isinstance(files, list) else [])
@@ -101,25 +97,13 @@ class PRSecurityCrew:
                 "file_count": file_count,
                 "file_list": file_list,
             })
-
-            log.info("pr_security: saved %s#%d diff → %s (%d bytes, %d files)",
+            log.info("pr_security: saved %s#%d → %s (%d bytes, %d files)",
                      repo, number, diff_path, diff_size, file_count)
 
         ctx["pr_entries"] = json.dumps(pr_entries)
         ctx["pr_count"] = str(len(pr_entries))
         ctx["dry_run"] = str(dry_run)
         ctx["no_prs"] = "false"
-
-        # Build a summary for the orchestrator task
-        summary_lines = []
-        for p in pr_entries:
-            summary_lines.append(
-                f"- {p['repo']}#{p['number']}: {p['title']} "
-                f"({p['file_count']} files, {p['diff_size']} bytes) "
-                f"→ diff at {p['diff_path']}"
-            )
-        ctx["pr_summary"] = "\n".join(summary_lines)
-
         return ctx
 
     @agent
@@ -143,4 +127,5 @@ class PRSecurityCrew:
             verbose=True,
             planning=False,
             memory=False,
+            skills=["src/shared/skills"],
         )
