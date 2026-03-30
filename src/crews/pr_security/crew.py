@@ -54,7 +54,7 @@ class PRSecurityCrew:
 
         # ── 2. Save full diffs to temp files ──
         pr_entries = []
-        for pr in prs[:15]:
+        for pr in prs[:5]:  # Process 5 PRs per run to stay within iteration limits
             repo = pr.get("repo", "")
             number = pr.get("number", 0)
             title = pr.get("title", "")
@@ -111,6 +111,7 @@ class PRSecurityCrew:
             tools=[post_pr_review_comment, read_file],
             verbose=True,
             allow_delegation=False,
+            max_iter=50,
         )
 
     @task
@@ -121,7 +122,7 @@ class PRSecurityCrew:
     def crew(self) -> Crew:
         manager = Agent(
             role="Security Review Manager",
-            goal="Coordinate parallel security reviews across all open PRs by delegating each one to a security_reviewer.",
+            goal="Coordinate security reviews across all open PRs by delegating each one to a security_reviewer.",
             backstory=(
                 "You are the security review lead. For EACH PR in the task, "
                 "delegate to security_reviewer with the PR details and diff_path. "
@@ -130,6 +131,7 @@ class PRSecurityCrew:
             tools=[],
             verbose=True,
             allow_delegation=True,
+            max_iter=50,
         )
         return Crew(
             agents=self.agents,
