@@ -1,40 +1,89 @@
-review_and_post:
+review_all_prs:
   description: >
-    You have {pr_count} open PRs to review. The full diffs are below.
+    You have {pr_count} PRs to review. Each PR's full diff is saved to a file.
 
-    For EACH PR, analyze the diff for:
-    1. HIPAA violations (PHI logging, unencrypted storage, missing auth)
-    2. OWASP Top 10 (injection, XSS, broken auth, misconfig)
-    3. Hardcoded secrets or credentials
-    4. Missing input validation
-    5. CareSpace-specific: missing AuthGuard, Prisma raw queries, PHI in responses
+    PR list:
+    {pr_summary}
 
-    For each finding include: severity, file:line, issue, HIPAA impact, fix.
+    DRY RUN: {dry_run}
 
-    SEVERITY: Critical (block merge), High (fix before merge), Medium (fix in sprint), Low (backlog)
+    FOR EACH PR:
 
-    DRY RUN MODE: {dry_run}
-    If dry_run is "true": do NOT call post_pr_review_comment.
-    Just return all findings as your final answer.
+    1. READ THE FULL DIFF using read_file tool.
+       Pass the diff file path from the PR list above.
+       If the file is large (>500 lines), read it in chunks:
+       - read_file(path, 0, 500)
+       - read_file(path, 500, 500)
+       - Continue until you have read the ENTIRE file.
+       DO NOT skip any part of the diff. Read every line.
 
-    If dry_run is "false": call post_pr_review_comment ONCE per PR
-    with a formatted markdown comment.
+    2. ANALYZE the complete diff for:
+       - HIPAA violations: PHI logging, unencrypted storage, missing auth
+       - OWASP Top 10: injection, XSS, CSRF, broken auth, misconfig
+       - Hardcoded secrets: API keys, tokens, passwords, connection strings
+       - Missing input validation: DTOs without class-validator, unvalidated params
+       - CareSpace-specific:
+         * NestJS: missing @UseGuards(AuthGuard), missing RolesGuard
+         * Prisma: $queryRawUnsafe, mass assignment from request body
+         * React: dangerouslySetInnerHTML, PHI in localStorage
+         * Flutter: SharedPreferences for tokens, http:// URLs
+         * Docker: secrets in ENV, root user, :latest images
+       - Code quality: missing error handling, TypeScript any, dead code
 
-    PR comment format:
-    ## 🔒 Security Review — PASS/NEEDS CHANGES/BLOCK
-    **PR:** repo#number — title
-    **Files:** N changed
-    ### Findings
-    (findings or "✅ No security issues found.")
-    ---
-    *Automated review by CareSpace SecDevOps AI*
+    3. For each finding, record:
+       - Severity: Critical / High / Medium / Low
+       - File and line reference (from the diff)
+       - What's wrong (one clear sentence)
+       - HIPAA impact (for Critical/High)
+       - Specific fix (code example)
 
-    If a PR is clean, post "✅ Security Review — Clean"
+    4. Score the PR:
+       - Any Critical finding → BLOCK (do not merge)
+       - Any High finding → NEEDS CHANGES
+       - Only Medium/Low or clean → PASS
 
-    HERE ARE THE PRs TO REVIEW:
+    5. IF dry_run is "true":
+       Do NOT call post_pr_review_comment.
+       Include the full formatted review for each PR in your final answer.
 
-    {pr_review_data}
+    6. IF dry_run is "false":
+       Call post_pr_review_comment for EACH PR with:
+       - repo: the repo name
+       - pr_number: the PR number
+       - body: formatted markdown using this template:
+
+       ## 🔒 Security Review — [PASS/NEEDS CHANGES/BLOCK]
+
+       **PR:** repo#number — title
+       **Reviewer:** CareSpace SecDevOps AI
+       **Files reviewed:** N
+
+       ### Security Findings
+
+       #### 🔴 Critical: [Issue Type]
+       **File:** `path/to/file.ts:42`
+       **Issue:** Description of the vulnerability.
+       **HIPAA Impact:** Why this matters for patient data.
+       **Fix:**
+       ```typescript
+       // suggested fix code
+       ```
+
+       (repeat for each finding)
+
+       ### Code Quality Notes
+       (any non-security observations)
+
+       ---
+       *Automated security review by CareSpace SecDevOps AI*
+
+    IMPORTANT:
+    - Read the ENTIRE diff for each PR. No shortcuts.
+    - Only report REAL findings from the actual code in the diff.
+    - If a PR is clean, say so. Don't invent problems.
+    - Take your time. Thoroughness > speed.
 
   expected_output: >
-    Security findings per PR with severity, file references, and fixes.
+    Complete security review for each PR with findings, severity,
+    file references, fixes, and PASS/NEEDS CHANGES/BLOCK score.
   agent: security_reviewer
