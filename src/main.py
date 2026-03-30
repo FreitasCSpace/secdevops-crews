@@ -27,7 +27,9 @@ logging.basicConfig(level=logging.INFO, format="%(message)s")
 
 
 class SecDevOpsState(BaseModel):
-    crew_name: str = ""
+    crew_name: str = Field(default="pr_security", description="Crew to run")
+    repo: str = Field(default="", description="Specific repo to scan (empty = all)")
+    dry_run: str = Field(default="true", description="true = show findings only, false = post PR comments")
     crew_inputs: dict = {}
     crew_raw_output: str = ""
     crew_success: bool = False
@@ -56,8 +58,14 @@ class SecDevOpsFlow(Flow[SecDevOpsState]):
         raw = os.environ.get("CREWHUB_INPUT_KWARGS", "{}")
         inputs = json.loads(raw) if raw else {}
 
-        self.state.crew_name = inputs.pop("crew_name", "pr_security")
-        self.state.crew_inputs = inputs
+        self.state.crew_name = inputs.pop("crew_name", self.state.crew_name or "pr_security")
+        self.state.repo = inputs.pop("repo", self.state.repo or "")
+        self.state.dry_run = inputs.pop("dry_run", self.state.dry_run or "true")
+        self.state.crew_inputs = {
+            "repo": self.state.repo,
+            "dry_run": self.state.dry_run,
+            **inputs,
+        }
 
         if self.state.crew_name not in CREW_REGISTRY:
             available = ", ".join(sorted(CREW_REGISTRY.keys()))
