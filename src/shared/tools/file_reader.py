@@ -1,9 +1,10 @@
 """
 tools/file_reader.py
-Read files from the filesystem — used to read PR diffs saved as temp files.
+Read and write files — used to read PR diffs and save review output.
 """
 
 import json
+import os
 from crewai.tools import tool
 
 
@@ -40,3 +41,23 @@ def read_file(file_path: str, start_line: int = 0, max_lines: int = 500) -> str:
         return json.dumps({"error": f"File not found: {file_path}"})
     except Exception as e:
         return json.dumps({"error": str(e)})
+
+
+@tool("write_review_file")
+def write_review_file(filename: str, content: str) -> str:
+    """
+    Writes a security review to the output directory.
+    Use this to save each PR review as a markdown file.
+
+    filename: name of the file (e.g. 'carespace-ui_176.md')
+    content: markdown content of the review
+    """
+    try:
+        output_dir = os.path.join(os.getcwd(), "output")
+        os.makedirs(output_dir, exist_ok=True)
+        filepath = os.path.join(output_dir, filename)
+        with open(filepath, "w") as f:
+            f.write(content)
+        return json.dumps({"ok": True, "path": filepath})
+    except Exception as e:
+        return json.dumps({"ok": False, "error": str(e)})

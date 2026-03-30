@@ -8,6 +8,7 @@ from crewai.project import CrewBase, agent, before_kickoff, crew, task
 
 from shared.tools import (
     list_open_prs, get_pr_diff, get_pr_files, post_pr_review_comment,
+    write_review_file,
 )
 from shared.tools.file_reader import read_file
 
@@ -102,13 +103,20 @@ class PRSecurityCrew:
         ctx["pr_count"] = str(len(pr_entries))
         ctx["dry_run"] = str(dry_run)
         ctx["no_prs"] = "false"
+
+        # Create output directory for review files
+        output_dir = os.path.join(os.getcwd(), "output")
+        os.makedirs(output_dir, exist_ok=True)
+        ctx["output_dir"] = output_dir
+        log.info("pr_security: output dir → %s", output_dir)
+
         return ctx
 
     @agent
     def security_reviewer(self) -> Agent:
         return Agent(
             config=self.agents_config["security_reviewer"],
-            tools=[post_pr_review_comment, read_file],
+            tools=[post_pr_review_comment, read_file, write_review_file],
             verbose=True,
             allow_delegation=True,
             max_iter=50,

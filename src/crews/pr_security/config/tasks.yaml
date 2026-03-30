@@ -37,8 +37,16 @@ review_all_prs:
     *Automated review by CareSpace SecDevOps AI*
 
     DELEGATE ALL PRs. Do not skip any.
-    Collect all results and compile a final summary.
+
+    FOR EACH PR, after completing the review:
+    Call write_review_file to save the review as a markdown file:
+    - filename: "repo_number.md" (e.g. "carespace-ui_176.md")
+    - content: the full formatted review markdown
+
+    After all PRs are reviewed and saved, compile a final summary
+    listing each PR with its score and file path.
 
   expected_output: >
-    Security review summary for all PRs with findings and scores.
+    Summary of all PR reviews with scores and output file paths.
   agent: security_reviewer
+  output_file: output/summary.md
