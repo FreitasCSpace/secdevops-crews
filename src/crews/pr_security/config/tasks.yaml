@@ -1,72 +1,40 @@
-review_prs:
+review_and_post:
   description: >
-    PR diffs are pre-fetched in pr_data (JSON) in your inputs.
-    Parse pr_data.prs — each entry has: repo, number, title, author,
-    url, files, and diff.
+    You have {pr_count} open PRs to review. The full diffs are below.
 
     For EACH PR, analyze the diff for:
-    1. Security vulnerabilities (OWASP Top 10)
-    2. Hardcoded secrets or credentials
-    3. Missing input validation
-    4. Unsafe patterns
+    1. HIPAA violations (PHI logging, unencrypted storage, missing auth)
+    2. OWASP Top 10 (injection, XSS, broken auth, misconfig)
+    3. Hardcoded secrets or credentials
+    4. Missing input validation
+    5. CareSpace-specific: missing AuthGuard, Prisma raw queries, PHI in responses
 
-    For each finding, record:
-    - PR: repo#number
-    - Severity: Critical/High/Medium/Low
-    - File + line reference
-    - Description: what's wrong
-    - Fix: how to fix it
+    For each finding include: severity, file:line, issue, HIPAA impact, fix.
 
-    If a PR has NO security issues, note it as clean.
-    If pr_data has no PRs, return "No open PRs to review."
+    SEVERITY: Critical (block merge), High (fix before merge), Medium (fix in sprint), Low (backlog)
 
-    Do NOT call any tools. Do NOT post comments yet.
-  expected_output: >
-    Security findings per PR, or "No open PRs to review."
-  agent: security_reviewer
+    DRY RUN MODE: {dry_run}
+    If dry_run is "true": do NOT call post_pr_review_comment.
+    Just return all findings as your final answer.
 
-post_findings:
-  description: >
-    For each PR that has security findings from the review:
+    If dry_run is "false": call post_pr_review_comment ONCE per PR
+    with a formatted markdown comment.
 
-    Build a markdown comment with this format:
-    ```
-    ## 🔒 Security Review
-
+    PR comment format:
+    ## 🔒 Security Review — PASS/NEEDS CHANGES/BLOCK
     **PR:** repo#number — title
-    **Reviewer:** SecDevOps AI
-
+    **Files:** N changed
     ### Findings
-
-    #### 🔴 Critical: SQL Injection
-    **File:** `src/api/users.py:42`
-    **Issue:** User input concatenated directly in SQL query.
-    **Fix:** Use parameterized query: `cursor.execute('SELECT * FROM users WHERE id = %s', (user_id,))`
-
-    #### 🟡 Medium: Missing Input Validation
-    **File:** `src/routes/auth.py:15`
-    **Issue:** Email field not validated before database insert.
-    **Fix:** Add validation: `if not re.match(r'^[^@]+@[^@]+\.[^@]+$', email): raise ValueError()`
-
+    (findings or "✅ No security issues found.")
     ---
-    *Automated security review by SecDevOps AI*
-    ```
+    *Automated review by CareSpace SecDevOps AI*
 
-    Call post_pr_review_comment for EACH PR that has findings:
-    - repo: the repo name
-    - pr_number: the PR number
-    - body: the formatted markdown comment
+    If a PR is clean, post "✅ Security Review — Clean"
 
-    For PRs with NO findings, post a short "all clear" comment:
-    ```
-    ## ✅ Security Review — Clean
-    No security issues found in this PR.
-    *Automated review by SecDevOps AI*
-    ```
+    HERE ARE THE PRs TO REVIEW:
 
-    Call post_pr_review_comment ONCE per PR.
+    {pr_review_data}
+
   expected_output: >
-    Confirmation of comments posted per PR.
+    Security findings per PR with severity, file references, and fixes.
   agent: security_reviewer
-  context:
-    - review_prs
