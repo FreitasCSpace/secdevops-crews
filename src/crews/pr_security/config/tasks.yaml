@@ -1,0 +1,72 @@
+review_prs:
+  description: >
+    PR diffs are pre-fetched in pr_data (JSON) in your inputs.
+    Parse pr_data.prs — each entry has: repo, number, title, author,
+    url, files, and diff.
+
+    For EACH PR, analyze the diff for:
+    1. Security vulnerabilities (OWASP Top 10)
+    2. Hardcoded secrets or credentials
+    3. Missing input validation
+    4. Unsafe patterns
+
+    For each finding, record:
+    - PR: repo#number
+    - Severity: Critical/High/Medium/Low
+    - File + line reference
+    - Description: what's wrong
+    - Fix: how to fix it
+
+    If a PR has NO security issues, note it as clean.
+    If pr_data has no PRs, return "No open PRs to review."
+
+    Do NOT call any tools. Do NOT post comments yet.
+  expected_output: >
+    Security findings per PR, or "No open PRs to review."
+  agent: security_reviewer
+
+post_findings:
+  description: >
+    For each PR that has security findings from the review:
+
+    Build a markdown comment with this format:
+    ```
+    ## 🔒 Security Review
+
+    **PR:** repo#number — title
+    **Reviewer:** SecDevOps AI
+
+    ### Findings
+
+    #### 🔴 Critical: SQL Injection
+    **File:** `src/api/users.py:42`
+    **Issue:** User input concatenated directly in SQL query.
+    **Fix:** Use parameterized query: `cursor.execute('SELECT * FROM users WHERE id = %s', (user_id,))`
+
+    #### 🟡 Medium: Missing Input Validation
+    **File:** `src/routes/auth.py:15`
+    **Issue:** Email field not validated before database insert.
+    **Fix:** Add validation: `if not re.match(r'^[^@]+@[^@]+\.[^@]+$', email): raise ValueError()`
+
+    ---
+    *Automated security review by SecDevOps AI*
+    ```
+
+    Call post_pr_review_comment for EACH PR that has findings:
+    - repo: the repo name
+    - pr_number: the PR number
+    - body: the formatted markdown comment
+
+    For PRs with NO findings, post a short "all clear" comment:
+    ```
+    ## ✅ Security Review — Clean
+    No security issues found in this PR.
+    *Automated review by SecDevOps AI*
+    ```
+
+    Call post_pr_review_comment ONCE per PR.
+  expected_output: >
+    Confirmation of comments posted per PR.
+  agent: security_reviewer
+  context:
+    - review_prs

@@ -1,0 +1,11 @@
+[project]
+name = "secdevops-crews"
+version = "1.0.0"
+description = "SecDevOps AI crews — PR security scanning and code review"
+requires-python = ">=3.11"
+dependencies = [
+    "crewai[tools]>=1.12.0",
+]
+
+[tool.crewai]
+type = "flow"
