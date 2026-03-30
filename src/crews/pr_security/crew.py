@@ -104,19 +104,6 @@ class PRSecurityCrew:
         ctx["no_prs"] = "false"
         return ctx
 
-    # ── Manager agent: coordinates and delegates ──
-
-    @agent
-    def review_manager(self) -> Agent:
-        return Agent(
-            config=self.agents_config["review_manager"],
-            tools=[],
-            verbose=True,
-            allow_delegation=True,
-        )
-
-    # ── Reviewer agent: reads diffs, analyzes, posts findings ──
-
     @agent
     def security_reviewer(self) -> Agent:
         return Agent(
@@ -132,11 +119,23 @@ class PRSecurityCrew:
 
     @crew
     def crew(self) -> Crew:
+        manager = Agent(
+            role="Security Review Manager",
+            goal="Coordinate parallel security reviews across all open PRs by delegating each one to a security_reviewer.",
+            backstory=(
+                "You are the security review lead. For EACH PR in the task, "
+                "delegate to security_reviewer with the PR details and diff_path. "
+                "Delegate ALL PRs. Collect results and compile a final summary."
+            ),
+            tools=[],
+            verbose=True,
+            allow_delegation=True,
+        )
         return Crew(
             agents=self.agents,
             tasks=self.tasks,
             process=Process.hierarchical,
-            manager_agent=self.review_manager(),
+            manager_agent=manager,
             verbose=True,
             planning=False,
             memory=False,

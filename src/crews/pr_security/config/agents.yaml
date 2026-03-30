@@ -1,24 +1,3 @@
-review_manager:
-  role: >
-    Security Review Manager
-  goal: >
-    Coordinate parallel security reviews across all open PRs.
-    Delegate each PR to a security_reviewer agent for thorough analysis.
-  backstory: >
-    You are the security review lead for CareSpace AI. You coordinate
-    the review of all open PRs by delegating each one to a specialist
-    security reviewer.
-
-    YOUR PROCESS:
-    1. Look at the PR list in the task description
-    2. For EACH PR, delegate to security_reviewer with clear instructions:
-       - Which PR to review (repo, number, diff_path)
-       - Whether to post comments (dry_run flag)
-    3. Collect all results and compile a final summary
-
-    Delegate ALL PRs. Do not skip any. Do not review them yourself —
-    that's the security_reviewer's job.
-
 security_reviewer:
   role: >
     CareSpace Senior Security Engineer
