@@ -1,11 +1,13 @@
 """
 tools/github_pr.py
-GitHub PR tools using gh CLI for fetching diffs and posting review comments.
+GitHub PR tools using direct API calls with GITHUB_TOKEN from environment.
+No gh CLI dependency — works in any environment with requests.
 """
 
 import json
-import subprocess
+import os
 import logging
+import requests
 from crewai.tools import tool
 
 log = logging.getLogger(__name__)
@@ -13,24 +15,54 @@ log = logging.getLogger(__name__)
 ORG = "carespace-ai"
 
 
-def _gh(args: list[str], timeout: int = 30) -> str:
-    """Run gh CLI command and return output."""
-    result = subprocess.run(
-        ["gh"] + args,
-        capture_output=True,
-        text=True,
-        timeout=timeout,
-    )
-    if result.returncode != 0:
-        raise RuntimeError(f"gh {' '.join(args[:3])}: {result.stderr[:200]}")
-    return result.stdout
+def _gh_api(endpoint: str, method: str = "GET", payload: dict = None) -> dict | list:
+    """GitHub API v3 call using GITHUB_TOKEN from environment."""
+    token = os.environ.get("GITHUB_TOKEN", "")
+    if not token:
+        raise RuntimeError("GITHUB_TOKEN not set in environment")
+
+    url = f"https://api.github.com/{endpoint}"
+    headers = {
+        "Authorization": f"token {token}",
+        "Accept": "application/vnd.github+json",
+    }
+
+    if method == "GET":
+        resp = requests.get(url, headers=headers, timeout=30)
+    elif method == "POST":
+        resp = requests.post(url, headers=headers, json=payload, timeout=30)
+    elif method == "PATCH":
+        resp = requests.patch(url, headers=headers, json=payload, timeout=30)
+    else:
+        raise ValueError(f"Unsupported method: {method}")
+
+    if resp.status_code >= 400:
+        raise RuntimeError(f"GitHub API {resp.status_code}: {resp.text[:200]}")
+
+    if resp.status_code == 204:
+        return {}
+    return resp.json()
+
+
+def _gh_raw(endpoint: str) -> str:
+    """GitHub API call that returns raw text (for diffs)."""
+    token = os.environ.get("GITHUB_TOKEN", "")
+    url = f"https://api.github.com/{endpoint}"
+    headers = {
+        "Authorization": f"token {token}",
+        "Accept": "application/vnd.github.v3.diff",
+    }
+    resp = requests.get(url, headers=headers, timeout=60)
+    if resp.status_code >= 400:
+        raise RuntimeError(f"GitHub API {resp.status_code}: {resp.text[:200]}")
+    return resp.text
 
 
 @tool("list_open_prs")
 def list_open_prs(repo: str = "") -> str:
     """
     Lists open PRs across carespace-ai repos. Returns JSON array with
-    number, title, author, repo, url, created_at, and head branch.
+    number, title, author, repo, url, additions, deletions, head branch.
 
     repo: specific repo name (e.g. 'carespace-ui'). Empty = all repos.
     """
@@ -40,26 +72,29 @@ def list_open_prs(repo: str = "") -> str:
         repos = [repo]
     else:
         try:
-            result = _gh(["repo", "list", ORG, "--json", "name", "--limit", "100"])
-            repos = [r["name"] for r in json.loads(result)]
+            result = _gh_api(f"orgs/{ORG}/repos?per_page=100&sort=pushed&type=all")
+            repos = [r["name"] for r in result if not r.get("archived")]
         except Exception as e:
             return json.dumps({"error": f"Failed to list repos: {e}"})
 
     for rname in repos:
         try:
-            result = _gh([
-                "pr", "list",
-                "--repo", f"{ORG}/{rname}",
-                "--state", "open",
-                "--json", "number,title,author,url,createdAt,headRefName,additions,deletions",
-                "--limit", "20",
-            ])
-            for pr in json.loads(result):
-                pr["repo"] = rname
-                pr["full_repo"] = f"{ORG}/{rname}"
-                prs.append(pr)
+            result = _gh_api(f"repos/{ORG}/{rname}/pulls?state=open&per_page=20")
+            for pr in result:
+                prs.append({
+                    "repo": rname,
+                    "full_repo": f"{ORG}/{rname}",
+                    "number": pr["number"],
+                    "title": pr["title"],
+                    "author": pr.get("user", {}).get("login", "unknown"),
+                    "url": pr["html_url"],
+                    "headRefName": pr["head"]["ref"],
+                    "additions": pr.get("additions", 0),
+                    "deletions": pr.get("deletions", 0),
+                    "createdAt": pr.get("created_at", ""),
+                })
         except Exception:
-            continue  # Skip repos with no PRs or access issues
+            continue
 
     return json.dumps(prs, indent=2)
 
@@ -73,12 +108,8 @@ def get_pr_diff(repo: str, pr_number: int) -> str:
     pr_number: PR number
     """
     try:
-        diff = _gh([
-            "pr", "diff", str(pr_number),
-            "--repo", f"{ORG}/{repo}",
-        ], timeout=60)
+        diff = _gh_raw(f"repos/{ORG}/{repo}/pulls/{pr_number}")
 
-        # Truncate if too large (LLM context limit)
         if len(diff) > 50000:
             diff = diff[:50000] + "\n\n... (diff truncated — too large)"
 
@@ -96,13 +127,18 @@ def get_pr_files(repo: str, pr_number: int) -> str:
     pr_number: PR number
     """
     try:
-        result = _gh([
-            "pr", "view", str(pr_number),
-            "--repo", f"{ORG}/{repo}",
-            "--json", "files",
-        ])
-        data = json.loads(result)
-        return json.dumps(data.get("files", []), indent=2)
+        result = _gh_api(f"repos/{ORG}/{repo}/pulls/{pr_number}/files?per_page=100")
+        files = [
+            {
+                "filename": f["filename"],
+                "status": f["status"],
+                "additions": f["additions"],
+                "deletions": f["deletions"],
+                "patch": f.get("patch", "")[:5000],
+            }
+            for f in result
+        ]
+        return json.dumps(files, indent=2)
     except Exception as e:
         return json.dumps({"error": str(e)})
 
@@ -117,11 +153,16 @@ def post_pr_review_comment(repo: str, pr_number: int, body: str) -> str:
     body: markdown comment body with findings
     """
     try:
-        _gh([
-            "pr", "comment", str(pr_number),
-            "--repo", f"{ORG}/{repo}",
-            "--body", body,
-        ])
-        return json.dumps({"ok": True, "repo": repo, "pr": pr_number})
+        result = _gh_api(
+            f"repos/{ORG}/{repo}/issues/{pr_number}/comments",
+            method="POST",
+            payload={"body": body},
+        )
+        return json.dumps({
+            "ok": True,
+            "repo": repo,
+            "pr": pr_number,
+            "comment_url": result.get("html_url", ""),
+        })
     except Exception as e:
         return json.dumps({"ok": False, "error": str(e)})
