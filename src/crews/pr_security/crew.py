@@ -110,7 +110,7 @@ class PRSecurityCrew:
             config=self.agents_config["security_reviewer"],
             tools=[post_pr_review_comment, read_file],
             verbose=True,
-            allow_delegation=False,
+            allow_delegation=True,
             max_iter=50,
         )
 
