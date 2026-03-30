@@ -16,21 +16,17 @@ log = logging.getLogger(__name__)
 
 @CrewBase
 class PRSecurityCrew:
-    """Scans open PRs — one parallel task per PR, skills loaded.
+    """Hierarchical PR security review — manager delegates PRs to reviewers.
 
-    before_kickoff:
-    1. Fetches all open PRs and saves FULL diffs to temp files
-    2. Creates dynamic tasks — one per PR
+    before_kickoff: fetches PRs, saves full diffs to temp files
+    Manager agent: coordinates reviews, assigns PRs to reviewer agents
+    Reviewer agents: read diffs via read_file, analyze, post findings
 
-    Skills (src/shared/skills/) provide OWASP + HIPAA + CareSpace knowledge.
-    Tasks run in parallel for efficiency.
+    Skills loaded from src/shared/skills/ (OWASP + HIPAA + CareSpace)
     """
 
     agents_config = "config/agents.yaml"
     tasks_config = "config/tasks.yaml"
-
-    _dynamic_tasks: list[Task] = []
-    _reviewer_agent: Agent = None
 
     @before_kickoff
     def inject_context(self, inputs):
@@ -52,6 +48,8 @@ class PRSecurityCrew:
         if not prs:
             ctx["no_prs"] = "true"
             ctx["dry_run"] = str(dry_run)
+            ctx["pr_count"] = "0"
+            ctx["pr_entries"] = "[]"
             return ctx
 
         # ── 2. Save full diffs to temp files ──
@@ -106,12 +104,26 @@ class PRSecurityCrew:
         ctx["no_prs"] = "false"
         return ctx
 
+    # ── Manager agent: coordinates and delegates ──
+
+    @agent
+    def review_manager(self) -> Agent:
+        return Agent(
+            config=self.agents_config["review_manager"],
+            tools=[],
+            verbose=True,
+            allow_delegation=True,
+        )
+
+    # ── Reviewer agent: reads diffs, analyzes, posts findings ──
+
     @agent
     def security_reviewer(self) -> Agent:
         return Agent(
             config=self.agents_config["security_reviewer"],
             tools=[post_pr_review_comment, read_file],
             verbose=True,
+            allow_delegation=False,
         )
 
     @task
@@ -123,7 +135,8 @@ class PRSecurityCrew:
         return Crew(
             agents=self.agents,
             tasks=self.tasks,
-            process=Process.sequential,
+            process=Process.hierarchical,
+            manager_agent=self.review_manager(),
             verbose=True,
             planning=False,
             memory=False,
