@@ -1,189 +1,71 @@
 ---
-name: code-standards-base
-version: 1.0.0
+name: carespace-security-standards
+version: 2.0.0
 type: abstract
-description: Source of truth for code review standards. Abstract skill — do not invoke directly.
-tags: [code-review, security, performance, abstract, base]
-author: Gustavo Stork
+description: Security standards for CareSpace AI — a HIPAA-compliant movement health platform handling PHI via computer vision.
+tags: [security, hipaa, healthcare, carespace, standards]
 ---
 
-# Code Standards Base
+# CareSpace Security Standards
 
 ## GUARD
 
-> ⚠️ **SKILL ABSTRATA**
->
-> Se você foi invocado diretamente (não via outra skill que declare dependência),
-> responda: "Esta é uma skill abstrata. Use `security-auditor`, `performance-optimizer` ou
-> `code-review-orchestrator` para tarefas específicas."
+> This is a reference skill. Do not invoke directly.
 
-## PROPÓSITO
+## ABOUT CARESPACE
 
-Esta skill é uma **ABSTRAÇÃO**. Ela não executa ações — apenas fornece definições e regras que outras skills devem carregar e aplicar.
+CareSpace AI is a HIPAA-compliant movement health platform that uses phone/webcam computer vision to measure 553+ body landmarks. It processes Protected Health Information (PHI): patient identifiers, health assessments, body scan imagery.
+
+**Stack:** React 18/TypeScript + NestJS/Prisma + Flutter/Dart SDK + Swift iOS + Kotlin Android. Azure (Container Apps, ACR, Blob, Service Bus, Key Vault). Auth via FusionAuth + JWT + NestJS guards.
 
 ---
 
 ## [SUMMARY]
 
-### Visão Geral das Regras (~200 tokens)
+**PHI Rules:** Never log PHI. Tokens in-memory only. TLS enforced. Scan images never on disk. JWT masked in output.
 
-**OWASP Top 10:** SQL Injection, XSS, CSRF, Broken Auth, Security Misconfig,
-Sensitive Data Exposure, XML External Entities, Broken Access Control,
-Insecure Deserialization, Insufficient Logging.
+**OWASP Healthcare:** SQL Injection (Prisma), XSS (React), CSRF, Broken Auth (FusionAuth/JWT), Misconfig (Azure), Data Exposure, Access Control (NestJS guards), Deserialization (DTO validation), Logging (audit without PHI content).
 
-**SOLID Principles:** Single Responsibility, Open/Closed, Liskov Substitution,
-Interface Segregation, Dependency Inversion.
-
-**Performance Rules:** O(n) complexity awareness, memory management,
-I/O optimization, caching strategies.
-
-**Métodos Abstratos:**
-- `audit(code) → SecurityReport`
-- `optimize(code) → OptimizedCode`
+**CareSpace Patterns:** FusionAuth JWT validation, NestJS AuthGuard on every endpoint, Prisma parameterized queries, Azure Key Vault for secrets, MediaPipe model integrity, Service Bus PHI encryption.
 
 ---
 
 ## [FULL]
 
-### OWASP Top 10 Detailed
+### HIPAA in Code
 
-#### 1. SQL Injection
-- Never concatenate user input in SQL queries
-- Use parameterized queries / prepared statements
-- Validate and sanitize all inputs
-- Apply least privilege to DB accounts
+- Never hardcode patient data, even in tests — use faker/mock
+- Redact from logs: userId, patientId, sessionId, email, password, token, authorization, x-api-key, screenshot, image, base64, firstName, lastName, fullName, name
+- JWT tokens: replace with [JWT ***]
+- Production: suppress all logging
 
-#### 2. Cross-Site Scripting (XSS)
-- Encode output in HTML context
-- Use Content-Security-Policy headers
-- Validate input on server side
-- Use frameworks with auto-escaping
+### HIPAA in Storage
 
-#### 3. CSRF (Cross-Site Request Forgery)
-- Implement anti-CSRF tokens
-- Validate Origin/Referer headers
-- Use SameSite cookie attribute
+- Tokens: in-memory only, never SharedPreferences/localStorage/disk
+- Persistent storage: flutter_secure_storage (iOS Keychain / Android EncryptedSharedPreferences)
+- Body scans: base64 in memory → upload → free. Never written to device.
 
-#### 4. Broken Authentication
-- Implement multi-factor authentication
-- Use secure password hashing (bcrypt, argon2)
-- Session management with secure tokens
-- Rate limiting on auth endpoints
+### HIPAA in Transit
 
-#### 5. Security Misconfiguration
-- Remove default credentials and configs
-- Disable unnecessary features and services
-- Keep frameworks and dependencies updated
-- Use security headers (HSTS, X-Frame-Options)
+- All API calls: https:// enforced (assert + throw)
+- Bearer token + x-api-key on every request
+- No certificate bypass in production
 
-#### 6. Sensitive Data Exposure
-- Encrypt data at rest and in transit
-- Use TLS 1.2+ for all connections
-- Never log sensitive data (passwords, tokens)
-- Implement proper key management
+### OWASP (CareSpace Context)
 
-#### 7. XML External Entities (XXE)
-- Disable external entity processing
-- Use simpler data formats (JSON) when possible
-- Validate and sanitize XML input
+1. **SQL Injection** — Prisma only. Never raw SQL with string interpolation. Use $queryRaw with tagged templates.
+2. **XSS** — React auto-escapes. Never dangerouslySetInnerHTML. CSP headers. Sanitize patient notes.
+3. **CSRF** — NestJS CSRF tokens. FusionAuth Origin validation. SameSite cookies.
+4. **Broken Auth** — FusionAuth JWT: validate signature, expiry, issuer, audience. Refresh rotation. Rate limiting. @UseGuards(AuthGuard) on every controller.
+5. **Misconfig** — No debug in production. No Swagger in production. No wildcard CORS. No public blob containers for PHI.
+6. **Data Exposure** — Azure Key Vault for secrets. .env gitignored. No secrets in Dockerfile. Prisma connection from env. Error responses hide internals.
+7. **Access Control** — AuthGuard + RolesGuard. Patients access own data only. Clinician role-based. Admin guard separate.
+8. **Deserialization** — class-validator + class-transformer in NestJS DTOs. Validate API responses in Flutter.
+9. **Logging** — Log auth events + PHI access metadata. Never log PHI content.
+10. **Dependencies** — npm/pub audit. Pin versions. Monitor CVEs for TensorFlow.js, MediaPipe, Prisma, NestJS, Flutter.
 
-#### 8. Broken Access Control
-- Deny by default
-- Implement proper RBAC/ABAC
-- Validate permissions on every request
-- Log access control failures
+### Azure Security
 
-#### 9. Insecure Deserialization
-- Never deserialize untrusted data
-- Use allow-lists for deserialization
-- Implement integrity checks (signatures)
-
-#### 10. Insufficient Logging
-- Log all authentication events
-- Log access control failures
-- Ensure logs have enough context
-- Implement monitoring and alerting
-
----
-
-### [FULL:solid]
-
-#### Single Responsibility Principle
-- Each function/class does ONE thing
-- If description needs "and", it's doing too much
-- Extract until each unit has a single reason to change
-
-#### Open/Closed Principle
-- Open for extension, closed for modification
-- Use interfaces and abstract classes
-- Prefer composition over inheritance
-
-#### Liskov Substitution Principle
-- Subtypes must be substitutable for base types
-- Don't weaken preconditions or strengthen postconditions
-- Maintain behavioral compatibility
-
-#### Interface Segregation Principle
-- Many specific interfaces over one general interface
-- Clients shouldn't depend on methods they don't use
-- Split fat interfaces into focused ones
-
-#### Dependency Inversion Principle
-- Depend on abstractions, not concretions
-- High-level modules don't depend on low-level modules
-- Both depend on abstractions
-
----
-
-### [FULL:performance]
-
-#### Complexity
-- Prefer O(n) or O(n log n) over O(n²)
-- Use hash maps for frequent lookups
-- Profile before optimizing
-- Avoid premature optimization
-
-#### Memory Management
-- Minimize allocations in hot paths
-- Use object pools for frequent allocations
-- Watch for memory leaks (event listeners, closures)
-- Prefer streaming over buffering for large data
-
-#### I/O Optimization
-- Batch database queries (avoid N+1)
-- Use connection pooling
-- Implement caching at appropriate layers
-- Use async I/O for non-blocking operations
-
-#### Caching Strategies
-- Cache at the right level (memory, Redis, CDN)
-- Implement proper cache invalidation
-- Use TTL-based expiration
-- Consider cache warming for cold starts
-
----
-
-## [ABSTRACT] Métodos a Implementar
-
-Skills que "herdam" desta base devem implementar:
-
-```
-audit(code: string) → SecurityReport
-  - Recebe código fonte
-  - Retorna relatório de segurança com vulnerabilidades
-  - Deve verificar OWASP Top 10
-
-optimize(code: string, focus: "performance" | "security" | "all") → OptimizedCode
-  - Recebe código e foco de otimização
-  - Retorna código otimizado + lista de mudanças
-
-review(code: string) → ReviewReport
-  - Recebe código fonte
-  - Retorna review completo (segurança + performance + SOLID)
-```
-
----
-
-## CHANGELOG
-
-- **v1.0.0** (2026-03-13): Initial release with OWASP Top 10, SOLID, Performance rules
+- Container Apps: no SSH, secrets via Key Vault refs, HTTPS-only ingress
+- Blob Storage: private containers for PHI, SAS with min permissions, encryption at rest
+- Service Bus: encrypt PHI messages, monitor dead-letter queue
