@@ -1,11 +1,22 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "secdevops-crews"
 version = "1.0.0"
-description = "SecDevOps AI crews — PR security scanning and code review"
+description = "SecDevOps AI — PR security scanning and HIPAA code review"
 requires-python = ">=3.11"
 dependencies = [
-    "crewai[tools]>=1.12.0",
+    "crewai>=1.10",
+    "pydantic>=2.0",
+    "pyyaml>=6.0",
+    "python-dotenv>=1.0",
 ]
 
 [tool.crewai]
 type = "flow"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["src*"]

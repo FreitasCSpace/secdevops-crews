@@ -1,3 +1,6 @@
+import json
+import logging
+
 from crewai import Agent, Crew, Process, Task
 from crewai.project import CrewBase, agent, before_kickoff, crew, task
 
@@ -5,14 +8,16 @@ from shared.tools import (
     list_open_prs, get_pr_diff, get_pr_files, post_pr_review_comment,
 )
 
+log = logging.getLogger(__name__)
+
 
 @CrewBase
 class PRSecurityCrew:
     """Scans open PRs for security issues and posts findings as comments.
 
-    before_kickoff: fetches open PRs and their diffs (Python)
-    LLM: analyzes diffs for security vulnerabilities + code quality (real LLM value)
-    LLM: posts findings as PR comments via gh CLI
+    before_kickoff: fetches open PRs and their diffs (Python — guaranteed real data)
+    LLM: analyzes diffs for HIPAA/OWASP vulnerabilities (real LLM value — pattern recognition)
+    LLM: formats and posts findings as PR comments
     """
 
     agents_config = "config/agents.yaml"
@@ -20,14 +25,12 @@ class PRSecurityCrew:
 
     @before_kickoff
     def inject_context(self, inputs):
-        import json, logging
-        log = logging.getLogger(__name__)
-
         ctx = inputs or {}
 
         # ── Fetch open PRs ──
+        repo_filter = ctx.get("repo", "")
         try:
-            prs_result = list_open_prs.run(repo=ctx.get("repo", ""))
+            prs_result = list_open_prs.run(repo=repo_filter)
             prs = json.loads(prs_result) if isinstance(prs_result, str) else prs_result
             if isinstance(prs, dict) and "error" in prs:
                 prs = []
@@ -40,9 +43,9 @@ class PRSecurityCrew:
             ctx["pr_data"] = json.dumps({"prs": [], "message": "No open PRs found."})
             return ctx
 
-        # ── Fetch diff for each PR ──
+        # ── Fetch diff for each PR (limit 10 per run) ──
         pr_data = []
-        for pr in prs[:10]:  # Limit to 10 PRs per run
+        for pr in prs[:10]:
             repo = pr.get("repo", "")
             number = pr.get("number", 0)
             try:
@@ -58,12 +61,12 @@ class PRSecurityCrew:
                 "repo": repo,
                 "number": number,
                 "title": pr.get("title", ""),
-                "author": pr.get("author", {}).get("login", "unknown"),
+                "author": pr.get("author", {}).get("login", "unknown") if isinstance(pr.get("author"), dict) else str(pr.get("author", "unknown")),
                 "url": pr.get("url", ""),
                 "additions": pr.get("additions", 0),
                 "deletions": pr.get("deletions", 0),
                 "files": files if isinstance(files, list) else [],
-                "diff": diff[:30000] if isinstance(diff, str) else "",  # Cap diff size
+                "diff": diff[:30000] if isinstance(diff, str) else "",
             })
             log.info("pr_security: fetched diff for %s#%d (%d chars)",
                      repo, number, len(pr_data[-1]["diff"]))

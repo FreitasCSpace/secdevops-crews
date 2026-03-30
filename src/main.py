@@ -1,17 +1,26 @@
-"""
-SecDevOps Crews — PR Security Scanner
+"""SecDevOps Crews Flow — CrewHub entry point.
 
-Single Flow that dispatches to security crews.
-Currently: pr_security crew scans open PRs and posts findings as comments.
+CrewHub detects this as a Flow (via [tool.crewai] type = "flow" in pyproject.toml)
+and calls kickoff(). Inputs arrive via CREWHUB_INPUT_KWARGS env var.
+
+Usage from CrewHub:
+    crew_name: "pr_security"    (required)
+    repo: "carespace-ui"        (optional — empty = scan all repos)
+
+Architecture:
+    @start  → load_inputs (parse CrewHub env, validate crew_name)
+    @listen → run_crew    (execute the requested crew)
 """
 
-import os
+import importlib
 import json
 import logging
-import importlib
-from crewai.flow.flow import Flow, listen, start
+import os
+from typing import Optional
+
+from crewai.flow.flow import Flow, start, listen
 from crewai.flow.persistence import persist
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 log = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="%(message)s")
@@ -20,8 +29,9 @@ logging.basicConfig(level=logging.INFO, format="%(message)s")
 class SecDevOpsState(BaseModel):
     crew_name: str = ""
     crew_inputs: dict = {}
-    crew_result: str = ""
+    crew_raw_output: str = ""
     crew_success: bool = False
+    crew_error: Optional[str] = None
 
 
 CREW_REGISTRY = {
@@ -31,10 +41,18 @@ CREW_REGISTRY = {
 
 @persist()
 class SecDevOpsFlow(Flow[SecDevOpsState]):
-    """Dispatches to SecDevOps crews."""
+    """Orchestrates SecDevOps crews with typed state and persistence.
+
+    CrewHub Input: {crew_name, repo?}
+
+    Steps:
+        1. load_inputs  — parse CrewHub env, validate crew_name
+        2. run_crew     — execute the requested crew
+    """
 
     @start()
     def load_inputs(self):
+        """Parse CrewHub env var and validate crew_name."""
         raw = os.environ.get("CREWHUB_INPUT_KWARGS", "{}")
         inputs = json.loads(raw) if raw else {}
 
@@ -49,17 +67,20 @@ class SecDevOpsFlow(Flow[SecDevOpsState]):
 
     @listen(load_inputs)
     def run_crew(self):
+        """Execute the requested crew with inputs."""
         module_path, cls_name = CREW_REGISTRY[self.state.crew_name]
         module = importlib.import_module(module_path)
         crew_cls = getattr(module, cls_name)
 
         try:
             result = crew_cls().crew().kickoff(inputs=self.state.crew_inputs)
-            self.state.crew_result = result.raw if hasattr(result, "raw") else str(result)
+            self._crew_result = result
+            self.state.crew_raw_output = result.raw if hasattr(result, "raw") else str(result)
             self.state.crew_success = True
             log.info("[%s] Complete", self.state.crew_name)
         except Exception as e:
-            self.state.crew_result = str(e)
+            self._crew_result = None
+            self.state.crew_error = str(e)
             self.state.crew_success = False
             log.error("[%s] Failed: %s", self.state.crew_name, e)
             raise
