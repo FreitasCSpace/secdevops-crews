@@ -60,13 +60,13 @@ class SecDevOpsFlow(Flow[SecDevOpsState]):
         raw = os.environ.get("CREWHUB_INPUT_KWARGS", "{}")
         inputs = json.loads(raw) if raw else {}
 
-        self.state.crew_name = inputs.pop("crew_name", self.state.crew_name or "pr_security")
-        self.state.repo = inputs.pop("repo", self.state.repo or "")
-        self.state.dry_run = inputs.pop("dry_run", self.state.dry_run or "true")
+        self.state.crew_name = inputs.get("crew_name", self.state.crew_name or "pr_security")
+        self.state.repo = inputs.get("repo", "")
+        self.state.dry_run = inputs.get("dry_run", "true")
+        # Only pass known fields — ignore junk from CrewHub UI cache
         self.state.crew_inputs = {
             "repo": self.state.repo,
             "dry_run": self.state.dry_run,
-            **inputs,
         }
 
         if self.state.crew_name not in CREW_REGISTRY:
