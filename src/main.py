@@ -98,11 +98,25 @@ class SecDevOpsFlow(Flow[SecDevOpsState]):
     @listen(run_crew)
     def build_output(self):
         """Compile summary for CrewHub output display and ensure artifacts exist."""
-        # List output files (artifacts)
-        output_dir = os.path.join(os.getcwd(), "output")
+        # Search for output files in multiple possible locations
+        cwd = os.getcwd()
+        possible_dirs = [
+            os.path.join(cwd, "output"),
+            "/app/output",
+            os.path.join(cwd, "src", "output"),
+            "output",
+        ]
+        output_dir = None
         output_files = []
-        if os.path.isdir(output_dir):
-            output_files = [f for f in os.listdir(output_dir) if f.endswith(".md")]
+        for d in possible_dirs:
+            if os.path.isdir(d):
+                files = [f for f in os.listdir(d) if f.endswith(".md")]
+                if files:
+                    output_dir = d
+                    output_files = files
+                    break
+
+        log.info("[%s] cwd=%s output_dir=%s files=%s", self.state.crew_name, cwd, output_dir, output_files)
 
         # Build CrewHub output message
         pr_count = self.state.crew_inputs.get("pr_count", "?")
