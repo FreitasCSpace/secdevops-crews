@@ -102,20 +102,71 @@ def list_open_prs(repo: str = "") -> str:
 @tool("get_pr_diff")
 def get_pr_diff(repo: str, pr_number: int) -> str:
     """
-    Gets the full diff of a PR. Returns the raw diff text.
+    Gets the diff of a PR. Tries the full diff first; if too large (>20K lines),
+    falls back to file-by-file patches via the files API.
 
     repo: repo name (e.g. 'carespace-ui')
     pr_number: PR number
     """
+    # Try full diff first
     try:
         diff = _gh_raw(f"repos/{ORG}/{repo}/pulls/{pr_number}")
-
         if len(diff) > 50000:
             diff = diff[:50000] + "\n\n... (diff truncated — too large)"
-
         return diff
     except Exception as e:
-        return json.dumps({"error": str(e)})
+        if "406" not in str(e) and "too_large" not in str(e):
+            return json.dumps({"error": str(e)})
+
+    # Fallback: fetch file-by-file patches (no size limit)
+    log.info("get_pr_diff: full diff too large for %s#%d — using file-by-file", repo, pr_number)
+    try:
+        page = 1
+        all_files = []
+        while True:
+            result = _gh_api(f"repos/{ORG}/{repo}/pulls/{pr_number}/files?per_page=100&page={page}")
+            if not result:
+                break
+            all_files.extend(result)
+            if len(result) < 100:
+                break
+            page += 1
+
+        # Sort by change size, largest first
+        all_files.sort(key=lambda f: f.get("changes", 0), reverse=True)
+
+        total_add = sum(f.get("additions", 0) for f in all_files)
+        total_del = sum(f.get("deletions", 0) for f in all_files)
+        header = f"# PR #{pr_number} in {repo} — {len(all_files)} files (+{total_add} -{total_del})\n\n"
+
+        chunks = [header]
+        total_len = len(header)
+        MAX_TOTAL = 80000  # keep total under 80K chars for LLM context
+        MAX_PER_FILE = 3000  # max patch chars per file
+
+        for f in all_files:
+            fname = f["filename"]
+            status = f["status"]
+            adds = f.get("additions", 0)
+            dels = f.get("deletions", 0)
+            patch = f.get("patch", "") or ""
+
+            if len(patch) > MAX_PER_FILE:
+                patch = patch[:MAX_PER_FILE] + f"\n... (patch truncated, {len(patch)} total chars)"
+
+            file_block = f"## {fname} ({status}, +{adds} -{dels})\n```diff\n{patch}\n```\n\n"
+
+            if total_len + len(file_block) > MAX_TOTAL:
+                remaining = len(all_files) - len(chunks) + 1
+                chunks.append(f"\n... ({remaining} more files omitted — diff too large)\n")
+                break
+
+            chunks.append(file_block)
+            total_len += len(file_block)
+
+        return "".join(chunks)
+    except Exception as e2:
+        return json.dumps({"error": f"File-by-file fallback also failed: {e2}"})
 
 
 @tool("get_pr_files")
