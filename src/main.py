@@ -8,15 +8,16 @@ Usage from CrewHub:
     repo: "carespace-ui"        (optional — empty = scan all repos)
 
 Architecture:
-    @start  → load_inputs (parse CrewHub env, validate crew_name)
-    @listen → run_crew    (execute the requested crew)
-    @listen → build_output (compile summary + ensure artifacts)
+    @start  → load_inputs  (parse CrewHub env, validate crew_name)
+    @listen → run_crew     (execute the requested crew)
+    @listen → build_output (write per-PR .md files + compile summary)
 """
 
 import importlib
 import json
 import logging
 import os
+import re
 from typing import Optional
 
 from crewai.flow.flow import Flow, start, listen
@@ -44,15 +45,6 @@ CREW_REGISTRY = {
 
 @persist()
 class SecDevOpsFlow(Flow[SecDevOpsState]):
-    """Orchestrates SecDevOps crews with typed state and persistence.
-
-    CrewHub Input: {crew_name, repo?}
-
-    Steps:
-        1. load_inputs   — parse CrewHub env, validate crew_name
-        2. run_crew      — execute the requested crew
-        3. build_output  — compile summary for CrewHub output display
-    """
 
     @start()
     def load_inputs(self):
@@ -63,7 +55,6 @@ class SecDevOpsFlow(Flow[SecDevOpsState]):
         self.state.crew_name = inputs.get("crew_name", self.state.crew_name or "pr_security")
         self.state.repo = inputs.get("repo", "")
         self.state.dry_run = inputs.get("dry_run", "true")
-        # Only pass known fields — ignore junk from CrewHub UI cache
         self.state.crew_inputs = {
             "repo": self.state.repo,
             "dry_run": self.state.dry_run,
@@ -97,69 +88,121 @@ class SecDevOpsFlow(Flow[SecDevOpsState]):
 
     @listen(run_crew)
     def build_output(self):
-        """Compile summary for CrewHub output display and ensure artifacts exist."""
-        # Search for output files in multiple possible locations
-        cwd = os.getcwd()
-        possible_dirs = [
-            os.path.join(cwd, "output"),
-            "/app/output",
-            os.path.join(cwd, "src", "output"),
-            "output",
-        ]
-        output_dir = None
-        output_files = []
-        for d in possible_dirs:
-            if os.path.isdir(d):
-                found = [x for x in os.listdir(d) if x.endswith(".md")]
-                if found:
-                    output_dir = d
-                    output_files = found
-                    break
+        """Write per-PR review .md files and compile CrewHub output summary.
 
-        log.info("[%s] cwd=%s output_dir=%s files=%s", self.state.crew_name, cwd, output_dir, output_files)
+        The LLM produces the security reviews but can't be trusted to call
+        write_review_file. So we parse its output here and write files from Python.
+        """
+        output_dir = os.path.join(os.getcwd(), "output")
+        os.makedirs(output_dir, exist_ok=True)
 
-        # Build CrewHub output message
-        pr_count = self.state.crew_inputs.get("pr_count", "?")
-        dry_run = self.state.dry_run
+        raw = self.state.crew_raw_output or ""
+        written_files = []
 
-        lines = [
-            f"## SecDevOps — PR Security Review",
-            f"",
-            f"**Mode:** {'Dry Run (no comments posted)' if dry_run == 'true' else 'Live (comments posted to PRs)'}",
-            f"**Repo filter:** {self.state.repo or 'all repos'}",
-            f"",
-        ]
+        # ── 1. Extract all task outputs (not just final) ──
+        full_text = raw
+        result_obj = getattr(self, "_crew_result", None)
+        if result_obj and hasattr(result_obj, "tasks_output") and result_obj.tasks_output:
+            sections = []
+            for task_out in result_obj.tasks_output:
+                task_raw = ""
+                if hasattr(task_out, "raw"):
+                    task_raw = str(task_out.raw or "")
+                elif hasattr(task_out, "output"):
+                    task_raw = str(task_out.output or "")
+                if task_raw.strip():
+                    sections.append(task_raw)
+            if sections:
+                full_text = "\n\n---\n\n".join(sections)
 
-        # Try to extract PR info from crew inputs
+        # ── 2. Write full review output as one file ──
+        if full_text.strip() and len(full_text.strip()) > 50:
+            full_path = os.path.join(output_dir, "full_review.md")
+            with open(full_path, "w") as fh:
+                fh.write(full_text)
+            written_files.append("full_review.md")
+            log.info("[%s] wrote output/full_review.md (%d chars)", self.state.crew_name, len(full_text))
+
+        # ── 3. Try to split by PR sections and write individual files ──
+        # Look for patterns like "## 🔒 Security Review" or "## PR #123" or "repo#number"
+        pr_sections = re.split(r'(?=^## .*(?:Security Review|PR\s*[#\d]|🔒))', full_text, flags=re.MULTILINE)
+        pr_sections = [s.strip() for s in pr_sections if s.strip() and len(s.strip()) > 100]
+
+        if len(pr_sections) > 1:
+            for section in pr_sections:
+                # Try to extract repo#number from section
+                match = re.search(r'(\w[\w.-]+)#(\d+)', section)
+                if match:
+                    pr_repo = match.group(1)
+                    pr_num = match.group(2)
+                    fname = f"{pr_repo}_{pr_num}.md"
+                else:
+                    # Fallback: use index
+                    idx = pr_sections.index(section)
+                    fname = f"review_{idx + 1}.md"
+
+                pr_path = os.path.join(output_dir, fname)
+                with open(pr_path, "w") as fh:
+                    fh.write(section)
+                written_files.append(fname)
+                log.info("[%s] wrote output/%s", self.state.crew_name, fname)
+
+        # ── 4. Also check if LLM wrote files via write_review_file tool ──
+        for existing in os.listdir(output_dir):
+            if existing.endswith(".md") and existing not in written_files:
+                written_files.append(existing)
+
+        # ── 5. Write summary.md ──
+        pr_entries = []
         try:
             pr_entries = json.loads(self.state.crew_inputs.get("pr_entries", "[]"))
-            if pr_entries:
-                lines.append(f"**PRs reviewed:** {len(pr_entries)}")
-                lines.append("")
-                for entry in pr_entries:
-                    lines.append(
-                        f"- **{entry.get('repo', '?')}#{entry.get('number', '?')}** "
-                        f"— {entry.get('title', '?')} ({entry.get('file_count', '?')} files)"
-                    )
-                lines.append("")
         except Exception:
             pass
 
-        if output_files:
-            lines.append(f"**Review files:** {len(output_files)}")
-            for fname in sorted(output_files):
-                lines.append(f"- `{fname}`")
-            lines.append("")
+        summary_lines = [
+            "# SecDevOps — PR Security Review Summary",
+            "",
+            f"**Mode:** {'Dry Run' if self.state.dry_run == 'true' else 'Live'}",
+            f"**Repo filter:** {self.state.repo or 'all repos'}",
+            f"**PRs analyzed:** {len(pr_entries) if pr_entries else '?'}",
+            f"**Review files:** {len(written_files)}",
+            "",
+        ]
 
-        # Append crew raw output (the LLM's final summary)
-        if self.state.crew_raw_output:
-            lines.append("---")
-            lines.append("")
-            lines.append(self.state.crew_raw_output)
+        if pr_entries:
+            summary_lines.append("## PRs Reviewed")
+            summary_lines.append("")
+            for entry in pr_entries:
+                summary_lines.append(
+                    f"- **{entry.get('repo', '?')}#{entry.get('number', '?')}** "
+                    f"— {entry.get('title', '?')} ({entry.get('file_count', '?')} files)"
+                )
+            summary_lines.append("")
 
-        summary = "\n".join(lines)
-        print(f"[{self.state.crew_name}] Complete.", flush=True)
-        return summary
+        if written_files:
+            summary_lines.append("## Output Files")
+            summary_lines.append("")
+            for fname in sorted(written_files):
+                summary_lines.append(f"- `output/{fname}`")
+            summary_lines.append("")
+
+        summary_md = "\n".join(summary_lines)
+        summary_path = os.path.join(output_dir, "summary.md")
+        with open(summary_path, "w") as fh:
+            fh.write(summary_md)
+        log.info("[%s] wrote output/summary.md", self.state.crew_name)
+
+        # ── 6. Return summary as CrewHub output message ──
+        output_lines = summary_lines.copy()
+        if raw and len(raw.strip()) > 50:
+            output_lines.append("---")
+            output_lines.append("")
+            # Truncate for display if very long
+            display_raw = raw if len(raw) < 5000 else raw[:5000] + "\n\n... (truncated)"
+            output_lines.append(display_raw)
+
+        print(f"[{self.state.crew_name}] Complete. {len(written_files)} files written to output/", flush=True)
+        return "\n".join(output_lines)
 
 
 def main():
