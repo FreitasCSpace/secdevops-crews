@@ -110,10 +110,10 @@ class SecDevOpsFlow(Flow[SecDevOpsState]):
         output_files = []
         for d in possible_dirs:
             if os.path.isdir(d):
-                files = [f for f in os.listdir(d) if f.endswith(".md")]
-                if files:
+                found = [x for x in os.listdir(d) if x.endswith(".md")]
+                if found:
                     output_dir = d
-                    output_files = files
+                    output_files = found
                     break
 
         log.info("[%s] cwd=%s output_dir=%s files=%s", self.state.crew_name, cwd, output_dir, output_files)
@@ -136,20 +136,19 @@ class SecDevOpsFlow(Flow[SecDevOpsState]):
             if pr_entries:
                 lines.append(f"**PRs reviewed:** {len(pr_entries)}")
                 lines.append("")
-                for pr in pr_entries:
-                    repo = pr.get("repo", "?")
-                    number = pr.get("number", "?")
-                    title = pr.get("title", "?")
-                    files = pr.get("file_count", "?")
-                    lines.append(f"- **{repo}#{number}** — {title} ({files} files)")
+                for entry in pr_entries:
+                    lines.append(
+                        f"- **{entry.get('repo', '?')}#{entry.get('number', '?')}** "
+                        f"— {entry.get('title', '?')} ({entry.get('file_count', '?')} files)"
+                    )
                 lines.append("")
         except Exception:
             pass
 
         if output_files:
             lines.append(f"**Review files:** {len(output_files)}")
-            for f in sorted(output_files):
-                lines.append(f"- `{f}`")
+            for fname in sorted(output_files):
+                lines.append(f"- `{fname}`")
             lines.append("")
 
         # Append crew raw output (the LLM's final summary)
