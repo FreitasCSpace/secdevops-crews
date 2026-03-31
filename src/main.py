@@ -10,6 +10,7 @@ Usage from CrewHub:
 Architecture:
     @start  → load_inputs (parse CrewHub env, validate crew_name)
     @listen → run_crew    (execute the requested crew)
+    @listen → build_output (compile summary + ensure artifacts)
 """
 
 import importlib
@@ -48,8 +49,9 @@ class SecDevOpsFlow(Flow[SecDevOpsState]):
     CrewHub Input: {crew_name, repo?}
 
     Steps:
-        1. load_inputs  — parse CrewHub env, validate crew_name
-        2. run_crew     — execute the requested crew
+        1. load_inputs   — parse CrewHub env, validate crew_name
+        2. run_crew      — execute the requested crew
+        3. build_output  — compile summary for CrewHub output display
     """
 
     @start()
@@ -85,13 +87,66 @@ class SecDevOpsFlow(Flow[SecDevOpsState]):
             self._crew_result = result
             self.state.crew_raw_output = result.raw if hasattr(result, "raw") else str(result)
             self.state.crew_success = True
-            log.info("[%s] Complete", self.state.crew_name)
+            log.info("[%s] Crew completed successfully", self.state.crew_name)
         except Exception as e:
             self._crew_result = None
             self.state.crew_error = str(e)
             self.state.crew_success = False
             log.error("[%s] Failed: %s", self.state.crew_name, e)
             raise
+
+    @listen(run_crew)
+    def build_output(self):
+        """Compile summary for CrewHub output display and ensure artifacts exist."""
+        # List output files (artifacts)
+        output_dir = os.path.join(os.getcwd(), "output")
+        output_files = []
+        if os.path.isdir(output_dir):
+            output_files = [f for f in os.listdir(output_dir) if f.endswith(".md")]
+
+        # Build CrewHub output message
+        pr_count = self.state.crew_inputs.get("pr_count", "?")
+        dry_run = self.state.dry_run
+
+        lines = [
+            f"## SecDevOps — PR Security Review",
+            f"",
+            f"**Mode:** {'Dry Run (no comments posted)' if dry_run == 'true' else 'Live (comments posted to PRs)'}",
+            f"**Repo filter:** {self.state.repo or 'all repos'}",
+            f"",
+        ]
+
+        # Try to extract PR info from crew inputs
+        try:
+            pr_entries = json.loads(self.state.crew_inputs.get("pr_entries", "[]"))
+            if pr_entries:
+                lines.append(f"**PRs reviewed:** {len(pr_entries)}")
+                lines.append("")
+                for pr in pr_entries:
+                    repo = pr.get("repo", "?")
+                    number = pr.get("number", "?")
+                    title = pr.get("title", "?")
+                    files = pr.get("file_count", "?")
+                    lines.append(f"- **{repo}#{number}** — {title} ({files} files)")
+                lines.append("")
+        except Exception:
+            pass
+
+        if output_files:
+            lines.append(f"**Review files:** {len(output_files)}")
+            for f in sorted(output_files):
+                lines.append(f"- `{f}`")
+            lines.append("")
+
+        # Append crew raw output (the LLM's final summary)
+        if self.state.crew_raw_output:
+            lines.append("---")
+            lines.append("")
+            lines.append(self.state.crew_raw_output)
+
+        summary = "\n".join(lines)
+        print(f"[{self.state.crew_name}] Complete.", flush=True)
+        return summary
 
 
 def main():
